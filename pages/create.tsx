@@ -40,6 +40,10 @@ const createId = (prefix: string) => `${prefix}-${Math.random().toString(36).sli
 export default function Create() {
   const [step, setStep] = useState(1)
   const [draft, setDraft] = useState<CVDraft>(emptyDraft)
+  const [jobOfferText, setJobOfferText] = useState('')
+  const [optimizeError, setOptimizeError] = useState('')
+  const [optimizePreview, setOptimizePreview] = useState<{ accrocheOptimisee: string; experiencesOptimisees: Array<Partial<CVExperience>> } | null>(null)
+  const [isOptimizing, setIsOptimizing] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const isDrawingRef = useRef(false)
   const latestPointRef = useRef<{ x: number; y: number } | null>(null)
@@ -92,6 +96,85 @@ export default function Create() {
   const modelOptions = cvModels
   const paletteOptions = Object.keys(cvPalettes) as PaletteKey[]
   const activePalette: PaletteKey = cvPalettes[draft.palette] ? draft.palette : 'bleu'
+
+  const handleOptimizeCv = async () => {
+    if (!jobOfferText.trim()) {
+      setOptimizeError('Veuillez saisir une offre d’emploi pour optimiser votre CV.')
+      return
+    }
+
+    setIsOptimizing(true)
+    setOptimizeError('')
+    setOptimizePreview(null)
+
+    try {
+      const response = await fetch('/api/optimize-cv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accroche: draft.personalProfile || draft.targetJob || '',
+          experiences: draft.experiences.map(exp => ({
+            title: exp.title,
+            company: exp.company,
+            location: exp.location,
+            startDate: exp.startDate,
+            endDate: exp.endDate,
+            description: exp.description,
+          })),
+          jobOffer: jobOfferText.trim(),
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setOptimizeError(data?.error || 'Une erreur inconnue est survenue pendant l’optimisation.')
+        return
+      }
+
+      if (!data?.accrocheOptimisee || !Array.isArray(data?.experiencesOptimisees)) {
+        setOptimizeError('La réponse de l’agent est invalide.')
+        return
+      }
+
+      setOptimizePreview({
+        accrocheOptimisee: data.accrocheOptimisee,
+        experiencesOptimisees: data.experiencesOptimisees,
+      })
+    } catch (error) {
+      setOptimizeError(error instanceof Error ? error.message : 'Impossible de contacter l’agent d’optimisation.')
+    } finally {
+      setIsOptimizing(false)
+    }
+  }
+
+  const acceptOptimization = () => {
+    if (!optimizePreview) return
+
+    const optimizedExperiences = optimizePreview.experiencesOptimisees.map((exp, index) => ({
+      id: draft.experiences[index]?.id ?? createId('exp'),
+      title: exp.title || '',
+      company: exp.company || '',
+      location: exp.location || '',
+      startDate: exp.startDate || '',
+      endDate: exp.endDate || '',
+      description: exp.description || '',
+    }))
+
+    setDraft(prev => ({
+      ...prev,
+      personalProfile: optimizePreview.accrocheOptimisee,
+      experiences: optimizedExperiences,
+    }))
+    setOptimizePreview(null)
+    setJobOfferText('')
+    setOptimizeError('')
+  }
+
+  const refuseOptimization = () => {
+    setOptimizePreview(null)
+    setOptimizeError('')
+  }
 
   const changeDraft = (patch: Partial<CVDraft>) => setDraft(prev => ({ ...prev, ...patch }))
 
@@ -794,6 +877,67 @@ export default function Create() {
               <div className="overflow-hidden">
                 <CVPreview draft={draft} countryRule={countryRule} template={draft.model} palette={activePalette} />
               </div>
+
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Optimiser mon CV pour une offre</p>
+                    <p className="mt-1 text-sm text-slate-500">Collez ici le texte d’une offre d’emploi pour reformuler votre accroche et vos expériences.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOptimizeCv}
+                    disabled={isOptimizing}
+                    className="rounded-full bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isOptimizing ? 'Optimisation…' : 'Optimiser'}
+                  </button>
+                </div>
+
+                <textarea
+                  value={jobOfferText}
+                  onChange={e => setJobOfferText(e.target.value)}
+                  rows={6}
+                  className="mt-4 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Collez ici l’offre d’emploi complète…"
+                />
+
+                {optimizeError ? (
+                  <p className="mt-3 text-sm font-medium text-red-600">{optimizeError}</p>
+                ) : null}
+
+                {optimizePreview ? (
+                  <div className="mt-4 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-semibold text-slate-900">Version optimisée proposée</p>
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Accroche</p>
+                        <p className="mt-1 text-sm text-slate-700">{optimizePreview.accrocheOptimisee}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Expériences</p>
+                        <div className="mt-2 space-y-2">
+                          {optimizePreview.experiencesOptimisees.map((exp, index) => (
+                            <div key={`${exp.title || 'exp'}-${index}`} className="rounded border border-slate-200 p-2 text-sm text-slate-700">
+                              <p className="font-semibold text-slate-900">{exp.title || 'Intitulé de poste'}</p>
+                              <p className="mt-1">{exp.description || 'Description proposée'}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button type="button" onClick={acceptOptimization} className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                        Accepter
+                      </button>
+                      <button type="button" onClick={refuseOptimization} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-900">
+                        Refuser
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
               {countryRule.signatureRequise && (
                 <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-center justify-between gap-3">
