@@ -10,6 +10,9 @@ type ExperienceInput = {
 }
 
 type OptimizeCvRequest = {
+  mode?: 'optimize' | 'rewrite'
+  kind?: 'profile' | 'experience'
+  text?: string
   accroche?: string
   profile?: string
   experiences?: ExperienceInput[]
@@ -19,6 +22,10 @@ type OptimizeCvRequest = {
 type OptimizeCvResponse = {
   accrocheOptimisee: string
   experiencesOptimisees: ExperienceInput[]
+}
+
+type RewriteCvResponse = {
+  rewrittenText: string
 }
 
 const sendJsonError = (res: NextApiResponse, status: number, message: string, details?: unknown) => {
@@ -73,6 +80,82 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const body = readJsonBody(req)
+    const mode = body.mode === 'rewrite' ? 'rewrite' : 'optimize'
+
+    if (mode === 'rewrite') {
+      const rawText = body.text?.trim() ?? ''
+      if (!rawText) {
+        return sendJsonError(res, 400, 'Le texte à reformuler est obligatoire.')
+      }
+
+      const modelName = await getAvailableFlashModel(apiKey)
+      console.info('Using Gemini model for rewrite:', modelName)
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [{
+                text: `Tu es un assistant de rédaction pour CV. Ta mission est de reformuler un texte saisi par un utilisateur pour le rendre professionnel, clair, fluide et entièrement correct en français.
+
+Tu DOIS corriger toutes les fautes d’orthographe, de grammaire, de conjugaison, d’accord et de ponctuation. Tu DOIS améliorer le vocabulaire, la précision et le style pour un rendu professionnel de CV, avec des phrases claires, des verbes d’action et un niveau de qualité supérieur. Tu DOIS rendre le texte visiblement différent et meilleur que l’entrée, jamais une simple copie. Si le texte d’entrée est déjà presque parfait, tu dois quand même l’améliorer, pas le recopier tel quel.
+
+Règles strictes et non négociables :
+- Corrige systématiquement toutes les erreurs de français.
+- Reformule de façon professionnelle et naturelle, sans conserver les erreurs ni les formulations maladroites.
+- Produis un texte visiblement amélioré, plus élégant et plus crédible qu’au départ.
+- Ne recopie jamais le texte tel quel : ne laisse pas de fautes, ni de tournures faibles, ni de phrases inachevées.
+- Ne jamais inventer de faits. Garde uniquement les informations réellement fournies par l’utilisateur : pas de diplôme, employeur, date, poste, compétence, lieu, chiffre ou détail inventé.
+- Si l’utilisateur donne des éléments incomplets, laisse-les incomplets plutôt que d’inventer.
+- Ne jamais ajouter d’identité, d’expérience, de formation ou de contexte non mentionné.
+- Réponds uniquement avec un JSON valide : { "rewrittenText": "..." }.
+
+Texte à reformuler :
+${rawText}`,
+              }],
+            }],
+          }),
+        },
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        let message = 'Échec de l’appel à l’API Gemini pour la reformulation.'
+        if (response.status === 429) message = 'Quota Gemini dépassé. La reformulation a été annulée.'
+        else if (response.status === 401 || response.status === 403) message = 'Clé API Gemini invalide ou non autorisée.'
+        else if (errorText) message = `Erreur Gemini (${response.status}) : ${errorText}`
+        return sendJsonError(res, response.status >= 500 ? 502 : 400, message, errorText)
+      }
+
+      const data = await response.json()
+      const rawReply = data?.candidates?.[0]?.content?.parts
+        ?.map((part: { text?: string }) => part.text ?? '')
+        .join('')
+        .trim()
+
+      if (!rawReply) {
+        return sendJsonError(res, 502, 'La réponse de Gemini est vide pour la reformulation.')
+      }
+
+      const cleaned = rawReply.replace(/^```json\s*/i, '').replace(/```$/i, '').trim()
+      let parsed: RewriteCvResponse
+      try {
+        parsed = JSON.parse(cleaned)
+      } catch {
+        return sendJsonError(res, 502, 'La réponse de Gemini n’est pas un JSON valide pour la reformulation.')
+      }
+
+      if (typeof parsed?.rewrittenText !== 'string' || !parsed.rewrittenText.trim()) {
+        return sendJsonError(res, 502, 'La réponse de Gemini ne contient pas le texte reformulé attendu.')
+      }
+
+      return res.status(200).json({ rewrittenText: parsed.rewrittenText.trim() })
+    }
+
     const profile = body.accroche ?? body.profile ?? ''
     const experiences = Array.isArray(body.experiences) ? body.experiences : []
     const jobOffer = body.jobOffer?.trim() ?? ''

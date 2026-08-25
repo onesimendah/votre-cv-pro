@@ -8,6 +8,7 @@ export type CVExperience = {
   startDate: string
   endDate: string
   description: string
+  technologies: string
 }
 
 export type CVEducation = {
@@ -23,6 +24,12 @@ export type CVLanguage = {
   id: string
   language: string
   level: string
+}
+
+export type CVSkillCategory = {
+  id: string
+  name: string
+  skills: string
 }
 
 export type CVDraft = {
@@ -50,9 +57,10 @@ export type CVDraft = {
   experiences: CVExperience[]
   education: CVEducation[]
   skills: string[]
+  skillCategories: CVSkillCategory[]
   languages: CVLanguage[]
   interests: string
-  model: 'classique' | 'moderne'
+  model: 'classique' | 'moderne' | 'colonne-laterale'
   palette: 'bleu' | 'emeraude' | 'bordeaux' | 'indigo' | 'sable'
 }
 
@@ -87,6 +95,7 @@ export const emptyDraft: CVDraft = {
       startDate: '',
       endDate: '',
       description: '',
+      technologies: '',
     },
   ],
   education: [
@@ -100,6 +109,7 @@ export const emptyDraft: CVDraft = {
     },
   ],
   skills: ['', ''],
+  skillCategories: [],
   languages: [
     {
       id: 'lang-1',

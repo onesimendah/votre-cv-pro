@@ -1,6 +1,7 @@
 import { CVDraft } from '../lib/cvTypes'
 import { CountryRule } from '../lib/countryRules'
 import { PaletteKey, TemplateKey, cvPalettes, cvModels } from '../lib/cvTemplates'
+import { CVPreviewColonneLaterale } from './CVPreviewColonneLaterale'
 
 type CVPreviewProps = {
   draft: CVDraft
@@ -12,9 +13,14 @@ type CVPreviewProps = {
 const templateClasses: Record<TemplateKey, string> = {
   classique: 'shadow-sm border border-slate-200 bg-white',
   moderne: 'shadow-2xl border border-slate-200 bg-white',
+  'colonne-laterale': 'shadow-sm border border-slate-200 bg-white',
 }
 
 export function CVPreview({ draft, countryRule, template, palette }: CVPreviewProps) {
+  if (template === 'colonne-laterale') {
+    return <CVPreviewColonneLaterale draft={draft} countryRule={countryRule} palette={palette} />
+  }
+
   const defaultPaletteStyle = cvPalettes.bleu
   const paletteStyle = cvPalettes[palette] ?? defaultPaletteStyle
 

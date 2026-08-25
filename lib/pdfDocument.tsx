@@ -3,7 +3,7 @@ import { CVDraft } from './cvTypes'
 import { CountryRule } from './countryRules'
 import { PaletteKey } from './cvTemplates'
 
-const paletteStyles: Record<PaletteKey, {
+export const paletteStyles: Record<PaletteKey, {
   accent: string
   heading: string
   background: string
@@ -58,7 +58,7 @@ const styles = StyleSheet.create({
     padding: 24,
     fontSize: 11,
     fontFamily: 'Helvetica',
-    lineHeight: 1.4,
+    lineHeight: 1.3,
     backgroundColor: '#ffffff',
   },
   header: {
@@ -68,9 +68,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   hero: {
-    padding: 16,
+    padding: 10,
     borderRadius: 12,
-    marginBottom: 16,
+    marginBottom: 10,
   },
   title: {
     fontSize: 20,
@@ -79,22 +79,22 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 11,
     color: '#475569',
-    marginTop: 4,
+    marginTop: 3,
   },
   sectionTitle: {
-    marginTop: 14,
-    marginBottom: 6,
+    marginTop: 8,
+    marginBottom: 4,
     fontSize: 10,
     fontWeight: 'bold',
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
   text: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#334155',
   },
   smallText: {
-    fontSize: 9,
+    fontSize: 8.5,
     color: '#475569',
   },
   row: {
@@ -113,12 +113,12 @@ const styles = StyleSheet.create({
   divider: {
     width: '100%',
     height: 2,
-    marginTop: 4,
-    marginBottom: 8,
+    marginTop: 3,
+    marginBottom: 4,
   },
   section: {
-    marginTop: 10,
-    marginBottom: 12,
+    marginTop: 5,
+    marginBottom: 6,
   },
   photo: {
     width: 70,
@@ -164,7 +164,7 @@ const renderSection = (section: string, draft: CVDraft, countryRule: CountryRule
           <Text style={[styles.sectionTitle, { color: paletteStyle.heading }]}>{section}</Text>
           <View style={[styles.divider, { backgroundColor: paletteStyle.stripe }]} />
           {draft.experiences.filter(exp => exp.title || exp.company).map(exp => (
-            <View key={exp.id} style={{ marginBottom: 8 }}>
+            <View key={exp.id} style={{ marginBottom: 5 }}>
               <View style={styles.row}>
                 <Text style={[styles.text, { fontWeight: 'bold' }]}>{exp.title || 'Intitulé de poste'}</Text>
                 <Text style={styles.smallText}>{formatDate(exp.startDate)} – {exp.endDate || 'Présent'}</Text>
@@ -181,7 +181,7 @@ const renderSection = (section: string, draft: CVDraft, countryRule: CountryRule
           <Text style={[styles.sectionTitle, { color: paletteStyle.heading }]}>Formation</Text>
           <View style={[styles.divider, { backgroundColor: paletteStyle.stripe }]} />
           {draft.education.filter(ed => ed.degree || ed.institution).map(ed => (
-            <View key={ed.id} style={{ marginBottom: 8 }}>
+            <View key={ed.id} style={{ marginBottom: 5 }}>
               <View style={styles.row}>
                 <Text style={styles.text}>{ed.degree || 'Diplôme'}</Text>
                 <Text style={styles.smallText}>{formatDate(ed.startDate)} – {ed.endDate || 'Présent'}</Text>
@@ -241,7 +241,7 @@ export const createPdfDocument = (draft: CVDraft, countryRule: CountryRule, pale
     <Document>
       <Page size="A4" style={styles.page} wrap>
         <View style={[styles.hero, { backgroundColor: paletteStyle.panel, borderColor: paletteStyle.accent, borderWidth: 1 }]}>          
-          <View style={[styles.heroRow, { backgroundColor: paletteStyle.accent, borderRadius: 10, padding: 12 }]}>            
+          <View style={[styles.heroRow, { backgroundColor: paletteStyle.accent, borderRadius: 10, padding: 10 }]}>
             <View style={styles.heroInfo}>
               <Text style={[styles.title, { color: '#ffffff' }]}>{draft.identity.firstName || 'Prénom'} {draft.identity.lastName || 'Nom'}</Text>
               <Text style={[styles.subtitle, { color: '#f8fafc', marginTop: 4 }]}>{draft.targetJob || 'Poste visé'}</Text>
@@ -259,13 +259,13 @@ export const createPdfDocument = (draft: CVDraft, countryRule: CountryRule, pale
 
         {countryRule.sections.map(section => renderSection(section, draft, countryRule, palette))}
         {countryRule.signatureRequise && draft.signatureDataUrl ? (
-          <View style={{ marginTop: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <View wrap={false} style={{ marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#e2e8f0', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={[styles.smallText, { color: paletteStyle.text, marginBottom: 8 }]}>Fait à {draft.signatureLocation || draft.contact.location || 'Ville'}, le {draft.signatureDate ? new Date(draft.signatureDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date'}</Text>
+              <Text style={[styles.smallText, { color: paletteStyle.text, marginBottom: 6 }]}>Fait à {draft.signatureLocation || draft.contact.location || 'Ville'}, le {draft.signatureDate ? new Date(draft.signatureDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date'}</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[styles.smallText, { color: paletteStyle.text, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }]}>Signature</Text>
-              <Image style={{ width: 140, height: 54 }} src={draft.signatureDataUrl} />
+              <Text style={[styles.smallText, { color: paletteStyle.text, marginBottom: 3, textTransform: 'uppercase', letterSpacing: 1 }]}>Signature</Text>
+              <Image style={{ width: 130, height: 46 }} src={draft.signatureDataUrl} />
             </View>
           </View>
         ) : null}

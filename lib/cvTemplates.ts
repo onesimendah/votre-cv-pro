@@ -1,4 +1,4 @@
-export type TemplateKey = 'classique' | 'moderne'
+export type TemplateKey = 'classique' | 'moderne' | 'colonne-laterale'
 export type PaletteKey = 'bleu' | 'emeraude' | 'bordeaux' | 'indigo' | 'sable'
 
 export const cvModels: Array<{ key: TemplateKey; name: string; description: string }> = [
@@ -11,6 +11,11 @@ export const cvModels: Array<{ key: TemplateKey; name: string; description: stri
     key: 'moderne',
     name: 'Moderne',
     description: 'Design épuré et contemporain, idéal pour une présentation dynamique.',
+  },
+  {
+    key: 'colonne-laterale',
+    name: 'Colonne latérale',
+    description: 'Colonne latérale foncée sur toute la hauteur avec coordonnées et compétences, colonne principale claire pour le parcours.',
   },
 ]
 
