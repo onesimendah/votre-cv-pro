@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { useRouter } from 'next/router'
 import { countryRules, CountryKey } from '../lib/countryRules'
 import { CVPreview } from '../components/CVPreview'
@@ -18,6 +19,33 @@ type ChatProposal = {
   warning?: string
   index?: number
   title?: string
+  experienceData?: Omit<CVExperience, 'id'>
+  finishRequested?: boolean
+}
+
+type ChatExtractedData = {
+  identity?: Partial<CVDraft['identity']>
+  targetJob?: string
+  contact?: Partial<CVDraft['contact']>
+  dateOfBirth?: string
+  familyStatus?: string
+  nationality?: string
+  country?: CountryKey
+  model?: CVDraft['model']
+  palette?: CVDraft['palette']
+  experience?: Partial<Omit<CVExperience, 'id'>>
+  education?: Partial<Omit<CVEducation, 'id'>>
+  skills?: string[]
+  languages?: Array<Partial<Pick<CVLanguage, 'language' | 'level'>>>
+  interests?: string
+  signatureLocation?: string
+  signatureDate?: string
+}
+
+type ChatExtractionResult = {
+  data: ChatExtractedData
+  warning?: string
+  fallbackText?: string
 }
 
 const normalizePalette = (rawPalette: string | undefined): PaletteKey => {
@@ -53,6 +81,156 @@ const buildDraft = (raw: any): CVDraft => {
 
 const createId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 9)}`
 
+const mergeExtractedText = (current: string, extracted: unknown) =>
+  typeof extracted === 'string' && extracted.trim() ? extracted.trim() : current
+
+const appendFallbackText = (current: string, rawText: string) =>
+  [current.trim(), rawText.trim()].filter(Boolean).join('\n')
+
+const isEmptyExperience = (experience: CVExperience) =>
+  !experience.title && !experience.company && !experience.location && !experience.startDate &&
+  !experience.endDate && !experience.description && !experience.technologies
+
+const isEmptyEducation = (education: CVEducation) =>
+  !education.degree && !education.institution && !education.location &&
+  !education.startDate && !education.endDate
+
+const mergeChatExtraction = (
+  draft: CVDraft,
+  step: number,
+  data: ChatExtractedData,
+  fallbackText?: string,
+): CVDraft => {
+  if (step === 0) {
+    const identity = data.identity || {}
+    const contact = data.contact || {}
+    return {
+      ...draft,
+      identity: {
+        ...draft.identity,
+        firstName: mergeExtractedText(draft.identity.firstName, identity.firstName),
+        lastName: mergeExtractedText(draft.identity.lastName, identity.lastName),
+      },
+      targetJob: fallbackText
+        ? appendFallbackText(draft.targetJob, fallbackText)
+        : mergeExtractedText(draft.targetJob, data.targetJob),
+      contact: {
+        ...draft.contact,
+        email: mergeExtractedText(draft.contact.email, contact.email),
+        phone: mergeExtractedText(draft.contact.phone, contact.phone),
+        location: mergeExtractedText(draft.contact.location, contact.location),
+        linkedin: mergeExtractedText(draft.contact.linkedin, contact.linkedin),
+      },
+      dateOfBirth: mergeExtractedText(draft.dateOfBirth, data.dateOfBirth),
+      familyStatus: mergeExtractedText(draft.familyStatus, data.familyStatus),
+      nationality: mergeExtractedText(draft.nationality, data.nationality),
+    }
+  }
+
+  if (step === 1) {
+    return {
+      ...draft,
+      country: data.country && countryRules[data.country] ? data.country : draft.country,
+      model: data.model || draft.model,
+      palette: data.palette || draft.palette,
+      personalProfile: fallbackText
+        ? appendFallbackText(draft.personalProfile, fallbackText)
+        : draft.personalProfile,
+    }
+  }
+
+  if (step === 3) {
+    const extracted = data.experience || {}
+    const index = draft.experiences.findIndex(isEmptyExperience)
+    const experience: CVExperience = {
+      id: index >= 0 ? draft.experiences[index].id : createId('exp'),
+      title: extracted.title || '',
+      company: extracted.company || '',
+      location: extracted.location || '',
+      startDate: extracted.startDate || '',
+      endDate: extracted.endDate || '',
+      description: fallbackText || extracted.description || '',
+      technologies: extracted.technologies || '',
+    }
+    const experiences = [...draft.experiences]
+    if (index >= 0) experiences[index] = { ...experiences[index], ...experience }
+    else experiences.push(experience)
+    return { ...draft, experiences }
+  }
+
+  if (step === 4) {
+    const extracted = data.education || {}
+    const index = draft.education.findIndex(isEmptyEducation)
+    const education: CVEducation = {
+      id: index >= 0 ? draft.education[index].id : createId('edu'),
+      degree: fallbackText || extracted.degree || '',
+      institution: extracted.institution || '',
+      location: extracted.location || '',
+      startDate: extracted.startDate || '',
+      endDate: extracted.endDate || '',
+    }
+    const list = [...draft.education]
+    if (index >= 0) list[index] = { ...list[index], ...education }
+    else list.push(education)
+    return { ...draft, education: list }
+  }
+
+  if (step === 5) {
+    const skills = [...draft.skills]
+    const extractedSkills = fallbackText ? [fallbackText] : (data.skills || [])
+    extractedSkills.forEach(skill => {
+      const value = skill.trim()
+      if (!value) return
+      const emptyIndex = skills.findIndex(existing => !existing.trim())
+      if (emptyIndex >= 0) skills[emptyIndex] = value
+      else if (!skills.some(existing => existing.trim().toLowerCase() === value.toLowerCase())) skills.push(value)
+    })
+
+    const languages = [...draft.languages]
+    if (!fallbackText) {
+      (data.languages || []).forEach(extracted => {
+        const language = extracted.language?.trim() || ''
+        const level = extracted.level?.trim() || ''
+        if (!language && !level) return
+        const emptyIndex = languages.findIndex(existing => !existing.language || !existing.level)
+        if (emptyIndex >= 0) {
+          languages[emptyIndex] = {
+            ...languages[emptyIndex],
+            language: languages[emptyIndex].language || language,
+            level: languages[emptyIndex].level || level,
+          }
+        } else {
+          languages.push({ id: createId('lang'), language, level })
+        }
+      })
+    }
+
+    return {
+      ...draft,
+      skills,
+      languages,
+      interests: fallbackText
+        ? mergeExtractedText(draft.interests, fallbackText)
+        : mergeExtractedText(draft.interests, data.interests),
+    }
+  }
+
+  if (step === 6) {
+    return {
+      ...draft,
+      signatureLocation: fallbackText
+        ? appendFallbackText(draft.signatureLocation, fallbackText)
+        : mergeExtractedText(draft.signatureLocation, data.signatureLocation),
+      signatureDate: mergeExtractedText(draft.signatureDate, data.signatureDate),
+    }
+  }
+
+  return draft
+}
+
+const hasChatFinishRequest = (text: string) => /\b(fin|terminer|ok|suivant|suite)\b/i.test(text)
+const isChatFinishOnly = (text: string) => /^(fin|terminer|ok|suivant|suite)[.!? ]*$/i.test(text.trim())
+
 export default function Create() {
   const router = useRouter()
   const [step, setStep] = useState(1)
@@ -69,6 +247,8 @@ export default function Create() {
   const [chatProposal, setChatProposal] = useState<ChatProposal | null>(null)
   const [isChatAiWorking, setIsChatAiWorking] = useState(false)
   const [isOptimizing, setIsOptimizing] = useState(false)
+  const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const isDrawingRef = useRef(false)
   const latestPointRef = useRef<{ x: number; y: number } | null>(null)
@@ -93,6 +273,18 @@ export default function Create() {
   useEffect(() => {
     localStorage.setItem('vcp_draft', JSON.stringify(draft))
   }, [draft])
+
+  useEffect(() => {
+    const chat = chatScrollRef.current
+    if (chat) chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' })
+  }, [chatMessages, isChatAiWorking, chatProposal])
+
+  useEffect(() => {
+    const input = chatInputRef.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${input.scrollHeight}px`
+  }, [chatInput])
 
   useEffect(() => {
     if (!countryRule?.signatureRequise) return
@@ -137,42 +329,50 @@ export default function Create() {
     'Signature et date si votre pays le demande.',
   ]
 
-  const parseNameFromText = (value: string) => {
-    const explicit = value.match(/(?:je\s+m?appelle|nom\s+complet|nom\s+est|je\s+suis)\s+([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-Ýà-öø-ÿ'\-]+(?:\s+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-Ýà-öø-ÿ'\-]+)+)/i)
-    if (explicit) return explicit[1].trim()
+  const extractChatData = async (step: number, rawText: string): Promise<ChatExtractionResult> => {
+    const emptyData: ChatExtractedData = step === 0
+      ? { identity: { firstName: '', lastName: '' }, targetJob: '', contact: { email: '', phone: '', location: '', linkedin: '' }, dateOfBirth: '', familyStatus: '', nationality: '' }
+      : step === 1
+        ? { country: draft.country, model: draft.model, palette: draft.palette }
+        : step === 3
+          ? { experience: { title: '', company: '', location: '', startDate: '', endDate: '', description: '', technologies: '' } }
+          : step === 4
+            ? { education: { degree: '', institution: '', location: '', startDate: '', endDate: '' } }
+            : step === 5
+              ? { skills: [], languages: [], interests: '' }
+              : { signatureLocation: '', signatureDate: '' }
+    const fallback = (message: string): ChatExtractionResult => ({
+      data: emptyData,
+      warning: `${message} Votre texte brut a été conservé dans le brouillon pour vérification.`,
+      fallbackText: rawText,
+    })
 
-    const words = value.split(/\s+/).filter(Boolean)
-    if (words.length >= 2) {
-      const candidate = words.slice(0, 2).join(' ')
-      if (!/[0-9@]/.test(candidate)) return candidate
+    try {
+      setIsChatAiWorking(true)
+      const response = await fetch('/api/optimize-cv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'extract',
+          step,
+          text: rawText,
+          country: draft.country,
+          defaults: { country: draft.country, model: draft.model, palette: draft.palette },
+        }),
+      })
+      const responseData = await response.json()
+      if (!response.ok) {
+        return fallback(responseData?.error || 'L’extraction automatique a échoué.')
+      }
+      if (!responseData?.data || typeof responseData.data !== 'object' || Array.isArray(responseData.data)) {
+        return fallback('La réponse d’extraction est invalide.')
+      }
+      return { data: responseData.data as ChatExtractedData }
+    } catch {
+      return fallback('Je n’ai pas pu extraire automatiquement vos informations.')
+    } finally {
+      setIsChatAiWorking(false)
     }
-    return ''
-  }
-
-  const parseCountryInput = (value: string): CountryKey | null => {
-    const lower = value.toLowerCase()
-    for (const country of Object.keys(countryRules) as CountryKey[]) {
-      if (lower.includes(country.toLowerCase())) return country
-    }
-    return null
-  }
-
-  const parseModelInput = (value: string): 'classique' | 'moderne' | 'colonne-laterale' | null => {
-    const lower = value.toLowerCase()
-    if (lower.includes('colonne') || lower.includes('latérale') || lower.includes('laterale')) return 'colonne-laterale'
-    if (lower.includes('moderne')) return 'moderne'
-    if (lower.includes('classique')) return 'classique'
-    return null
-  }
-
-  const parsePaletteInput = (value: string): PaletteKey | null => {
-    const lower = value.toLowerCase()
-    if (lower.includes('bleu')) return 'bleu'
-    if (lower.includes('émeraude') || lower.includes('emerau') || lower.includes('vert')) return 'emeraude'
-    if (lower.includes('bordeaux') || lower.includes('rouge')) return 'bordeaux'
-    if (lower.includes('indigo') || lower.includes('violet')) return 'indigo'
-    if (lower.includes('sable') || lower.includes('beige') || lower.includes('brun')) return 'sable'
-    return null
   }
 
   const rewriteChatText = async (kind: 'profile' | 'experience', rawText: string) => {
@@ -203,199 +403,72 @@ export default function Create() {
     }
   }
 
-  const applyChatDraftUpdate = async (rawText: string) => {
+  const applyChatDraftUpdate = async (rawText: string): Promise<{
+    shouldContinue: boolean
+    warning?: string
+    updatedDraft?: CVDraft
+  }> => {
     const input = rawText.trim()
-    if (!input) return
+    if (!input) return { shouldContinue: true }
 
-    const lower = input.toLowerCase()
-
-    setDraft(prev => {
-      let next = { ...prev }
-
-      if (chatStep === 0) {
-        const name = parseNameFromText(input)
-        if (name) {
-          const parts = name.split(/\s+/).filter(Boolean)
-          next = { ...next, identity: { ...next.identity, firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' } }
-        }
-
-        const target = input.match(/(?:poste|métier|intitulé|titre)\s*(?:visé|souhaité|recherché|professionnel)?\s*[:\-]?\s*([^\n;]+)/i)
-        if (target) next = { ...next, targetJob: target[1].trim() }
-
-        const email = input.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
-        if (email) next = { ...next, contact: { ...next.contact, email: email[0] } }
-
-        const phone = input.match(/(?:\+\d{1,3}\s?)?(?:\d{2}\s?){4,5}\d{2}/)
-        if (phone) next = { ...next, contact: { ...next.contact, phone: phone[0].trim() } }
-
-        const city = input.match(/(?:ville|habite|réside|à)\s*(?:à\s*)?([A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\-]+(?:\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\-]+){0,3})/i)
-        if (city) next = { ...next, contact: { ...next.contact, location: city[1].trim() } }
-
-        const linkedin = input.match(/https?:\/\/[^\s]+|linkedin\.com\/in\/[^\s]+/i)
-        if (linkedin) next = { ...next, contact: { ...next.contact, linkedin: linkedin[0].replace(/^https?:\/\//i, '') } }
-      }
-
-      if (chatStep === 1) {
-        const country = parseCountryInput(input)
-        if (country) next = { ...next, country }
-
-        const model = parseModelInput(input)
-        if (model) next = { ...next, model }
-
-        const palette = parsePaletteInput(input)
-        if (palette) next = { ...next, palette }
-      }
-
-      if (chatStep === 2) {
-        if (input.length > 6) next = { ...next, personalProfile: input }
-      }
-
-      if (chatStep === 3) {
-        const normalized = input.replace(/\s+/g, ' ').trim()
-        if (/\b(fin|terminer|ok|suivant|suite)\b/i.test(normalized)) {
-          return next
-        }
-
-        const titleMatch = normalized.match(/(?:poste|titre|rôle)\s*(?:[:\-])?\s*([^,;]+)/i)
-        const companyMatch = normalized.match(/(?:entreprise|employeur|chez)\s*(?:[:\-])?\s*([^,;]+)/i)
-        const locationMatch = normalized.match(/(?:lieu|ville|à)\s*(?:[:\-])?\s*([^,;]+)/i)
-        const dateMatch = normalized.match(/(\d{4}|\d{2}\/\d{4}|\d{4}\s*[-–]\s*\d{4}|\d{2}\/\d{4}\s*[-–]\s*\d{2}\/\d{4})/i)
-
-        const experience = {
-          id: `exp-${Date.now()}`,
-          title: titleMatch ? titleMatch[1].trim() : 'Intitulé de poste',
-          company: companyMatch ? companyMatch[1].trim() : 'Entreprise',
-          location: locationMatch ? locationMatch[1].trim() : '',
-          startDate: '',
-          endDate: '',
-          description: normalized,
-          technologies: '',
-        }
-
-        if (dateMatch) {
-          const dateValue = dateMatch[0].trim()
-          if (dateValue.includes('-') || dateValue.includes('–')) {
-            const [start, end] = dateValue.split(/[-–]/).map(part => part.trim())
-            experience.startDate = start
-            experience.endDate = end
-          } else {
-            experience.startDate = dateValue
-          }
-        }
-
-        next = {
-          ...next,
-          experiences: [...next.experiences.filter(exp => exp.title || exp.company || exp.description), experience],
-        }
-      }
-
-      if (chatStep === 4) {
-        const degreeMatch = input.match(/(?:diplôme|diplome|formation)\s*(?:[:\-])?\s*([^,;]+)/i)
-        const institutionMatch = input.match(/(?:école|université|ecole|institut|formation)\s*(?:[:\-])?\s*([^,;]+)/i)
-        const locationMatch = input.match(/(?:lieu|ville|à)\s*(?:[:\-])?\s*([^,;]+)/i)
-        const dateMatch = input.match(/(\d{4}|\d{2}\/\d{4}|\d{4}\s*[-–]\s*\d{4}|\d{2}\/\d{4}\s*[-–]\s*\d{2}\/\d{4})/i)
-
-        const education = {
-          id: `edu-${Date.now()}`,
-          degree: degreeMatch ? degreeMatch[1].trim() : '',
-          institution: institutionMatch ? institutionMatch[1].trim() : '',
-          location: locationMatch ? locationMatch[1].trim() : '',
-          startDate: '',
-          endDate: '',
-        }
-
-        if (dateMatch) {
-          const value = dateMatch[0].trim()
-          if (value.includes('-') || value.includes('–')) {
-            const [start, end] = value.split(/[-–]/).map(part => part.trim())
-            education.startDate = start
-            education.endDate = end
-          } else {
-            education.startDate = value
-          }
-        }
-
-        next = {
-          ...next,
-          education: [...next.education.filter(ed => ed.degree || ed.institution), education],
-        }
-      }
-
-      if (chatStep === 5) {
-        const trimmed = input.trim()
-        if (/langue/i.test(trimmed) || /compétence/i.test(trimmed) || /centres/i.test(trimmed) || /intérêts/i.test(trimmed) || /interets/i.test(trimmed)) {
-          const skills = trimmed.split(/[,;\n]/).map(item => item.trim()).filter(Boolean)
-          if (skills.length) {
-            next = { ...next, skills: [...next.skills.filter(Boolean), ...skills] }
-          }
-        } else {
-          const skills = input.split(/[,;\n]/).map(item => item.trim()).filter(Boolean)
-          if (skills.length) next = { ...next, skills: [...next.skills.filter(Boolean), ...skills] }
-        }
-
-        if (/français|anglais|espagnol|allemand|arabe|portugais/i.test(input)) {
-          const languageMatch = input.match(/([A-Za-zÀ-ÖØ-Ýà-öø-ÿ]+)\s*(?:\-|:)?\s*([A-Za-zÀ-ÖØ-Ýà-öø-ÿ0-9\s]+)?/i)
-          if (languageMatch) {
-            const language = languageMatch[1].trim()
-            next = {
-              ...next,
-              languages: [...next.languages.filter(lang => lang.language), { id: `lang-${Date.now()}`, language, level: languageMatch[2]?.trim() || 'Niveau' }],
-            }
-          }
-        }
-
-        if (/centre|intérêt|interet/i.test(input)) {
-          next = { ...next, interests: input }
-        }
-      }
-
-      if (chatStep === 6) {
-        const location = input.match(/(?:fait\s+à|signature|ville)\s*(?:[:\-])?\s*([^,;\n]+)/i)
-        if (location) next = { ...next, signatureLocation: location[1].trim() }
-
-        const date = input.match(/(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4}|\d{4})/)
-        if (date) next = { ...next, signatureDate: date[0] }
-      }
-
-      return next
-    })
-
-    const proposalCandidate = () => {
-      if (chatStep === 2) {
-        const profileText = draft.personalProfile || input
-        return profileText
-      }
-      return ''
-    }
-
-    if (chatStep === 2 && input.length > 10) {
-      const proposalText = proposalCandidate()
-      if (proposalText) {
-        const result = await rewriteChatText('profile', proposalText)
+    if (chatStep === 2) {
+      setDraft(prev => ({ ...prev, personalProfile: input }))
+      if (input.length > 10) {
+        const result = await rewriteChatText('profile', input)
         setChatProposal({
           kind: 'profile',
           text: result.text,
-          rawText: proposalText,
+          rawText: input,
           warning: result.warning,
         })
-        return false
+        return { shouldContinue: false }
       }
+      return { shouldContinue: true }
     }
 
-    if (chatStep === 3 && input && !/\b(fin|terminer|ok|suivant|suite)\b/i.test(input)) {
+    if ((chatStep === 3 || chatStep === 4) && isChatFinishOnly(input)) {
+      return { shouldContinue: true }
+    }
+
+    if (chatStep === 3) {
+      const extraction = await extractChatData(chatStep, input)
+      const extracted = extraction.data.experience || {}
       const result = await rewriteChatText('experience', input)
+      const emptyExperience = {
+        title: '',
+        company: '',
+        location: '',
+        startDate: '',
+        endDate: '',
+        description: extraction.fallbackText || extracted.description || '',
+        technologies: '',
+      }
       setChatProposal({
         kind: 'experience',
         text: result.text,
         rawText: input,
-        warning: result.warning,
-        title: 'Description de l’expérience',
-        index: Math.max(0, draft.experiences.length),
+        warning: [extraction.warning, result.warning].filter(Boolean).join(' ') || undefined,
+        experienceData: {
+          ...emptyExperience,
+          title: extracted.title || '',
+          company: extracted.company || '',
+          location: extracted.location || '',
+          startDate: extracted.startDate || '',
+          endDate: extracted.endDate || '',
+          technologies: extracted.technologies || '',
+        },
+        index: draft.experiences.findIndex(isEmptyExperience) >= 0
+          ? draft.experiences.findIndex(isEmptyExperience)
+          : draft.experiences.length,
+        finishRequested: hasChatFinishRequest(input),
       })
-      return false
+      return { shouldContinue: false }
     }
 
-    return true
+    const extraction = await extractChatData(chatStep, input)
+    const updatedDraft = mergeChatExtraction(draft, chatStep, extraction.data, extraction.fallbackText)
+    setDraft(prev => mergeChatExtraction(prev, chatStep, extraction.data, extraction.fallbackText))
+    return { shouldContinue: true, warning: extraction.warning, updatedDraft }
   }
 
   const handleChatSubmit = async () => {
@@ -405,19 +478,68 @@ export default function Create() {
     setChatMessages(prev => [...prev, { role: 'user', text: typed }])
     setChatInput('')
 
-    const shouldContinue = await applyChatDraftUpdate(typed)
-    if (!shouldContinue) return
+    const update = await applyChatDraftUpdate(typed)
+    if (!update.shouldContinue) return
 
     const currentStepIndex = chatStep
-    const isExperienceStep = currentStepIndex === 3
     if (currentStepIndex === 6) {
-      setChatMessages(prev => [...prev, { role: 'assistant', text: 'Parfait, la structure est prête. Vous pouvez vérifier le récapitulatif puis générer votre CV.' }])
+      const summaryDraft = update.updatedDraft || draft
+      const summaryLines = [
+        'Récapitulatif de votre CV :',
+        `Identité : ${[summaryDraft.identity.firstName, summaryDraft.identity.lastName].filter(Boolean).join(' ') || 'Non renseignée'}`,
+        `Coordonnées : ${[
+          summaryDraft.contact.email,
+          summaryDraft.contact.phone,
+          summaryDraft.contact.location,
+          summaryDraft.contact.linkedin,
+        ].filter(Boolean).join(' — ') || 'Non renseignées'}`,
+        `Date de naissance : ${summaryDraft.dateOfBirth || 'Non renseignée'}`,
+        `Nationalité : ${summaryDraft.nationality || 'Non renseignée'}`,
+        `Situation familiale : ${summaryDraft.familyStatus || 'Non renseignée'}`,
+        `Poste visé : ${summaryDraft.targetJob || 'Non renseigné'}`,
+        `Pays : ${summaryDraft.country}`,
+        `Modèle : ${summaryDraft.model}`,
+        `Couleur : ${summaryDraft.palette}`,
+        `Profil : ${summaryDraft.personalProfile || 'Non renseigné'}`,
+        'Expériences :',
+        ...(summaryDraft.experiences.filter(experience => !isEmptyExperience(experience)).length
+          ? summaryDraft.experiences.filter(experience => !isEmptyExperience(experience)).map((experience, index) =>
+            `${index + 1}. ${[experience.title, experience.company, experience.location, experience.startDate, experience.endDate].filter(Boolean).join(' — ')}${experience.description ? `\n   ${experience.description}` : ''}${experience.technologies ? `\n   Technologies : ${experience.technologies}` : ''}`)
+          : ['Aucune renseignée']),
+        'Formations :',
+        ...(summaryDraft.education.filter(education => !isEmptyEducation(education)).length
+          ? summaryDraft.education.filter(education => !isEmptyEducation(education)).map((education, index) =>
+            `${index + 1}. ${[education.degree, education.institution, education.location, education.startDate, education.endDate].filter(Boolean).join(' — ')}`)
+          : ['Aucune renseignée']),
+        `Compétences : ${summaryDraft.skills.filter(Boolean).join(', ') || 'Aucune renseignée'}`,
+        `Langues : ${summaryDraft.languages.filter(language => language.language || language.level).map(language => [language.language, language.level].filter(Boolean).join(' — ')).join(', ') || 'Aucune renseignée'}`,
+        `Centres d’intérêt : ${summaryDraft.interests || 'Non renseignés'}`,
+        ...(countryRules[summaryDraft.country]?.signatureRequise
+          ? [`Signature : ${[summaryDraft.signatureLocation, summaryDraft.signatureDate].filter(Boolean).join(' — ') || 'Non renseignée'}`]
+          : []),
+        'Vérifiez ces informations dans le formulaire avant de générer votre CV.',
+      ]
+      const warning = update.warning ? `\n\n⚠️ ${update.warning}` : ''
+      setChatMessages(prev => [...prev, { role: 'assistant', text: `${summaryLines.join('\n')}${warning}` }])
       setChatStep(7)
       return
     }
-    if (isExperienceStep && /\b(fin|terminer|ok|suivant|suite)\b/i.test(typed)) {
+    if (currentStepIndex === 3 && hasChatFinishRequest(typed)) {
       setChatMessages(prev => [...prev, { role: 'assistant', text: 'Très bien. Passons à la formation.' }])
       setChatStep(4)
+      return
+    }
+    if (currentStepIndex === 4) {
+      if (hasChatFinishRequest(typed)) {
+        setChatMessages(prev => [...prev, { role: 'assistant', text: 'Très bien. Passons aux compétences, langues et centres d’intérêt.' }])
+        setChatStep(5)
+      } else {
+        const warning = update.warning ? `\n\n⚠️ ${update.warning}` : ''
+        setChatMessages(prev => [...prev, {
+          role: 'assistant',
+          text: `Formation enregistrée. Ajoutez-en une autre, ou écrivez « fin » pour passer aux compétences.${warning}`,
+        }])
+      }
       return
     }
 
@@ -426,7 +548,8 @@ export default function Create() {
       ? `Merci. Passons à l’étape suivante : ${chatFlow[nextStep]}`
       : 'Excellent. Je peux maintenant vérifier le résumé et générer votre CV.'
 
-    setChatMessages(prev => [...prev, { role: 'assistant', text: nextAssistantText }])
+    const warning = update.warning ? `\n\n⚠️ ${update.warning}` : ''
+    setChatMessages(prev => [...prev, { role: 'assistant', text: `${nextAssistantText}${warning}` }])
     setChatStep(nextStep)
   }
 
@@ -437,7 +560,12 @@ export default function Create() {
       if (accept) {
         setDraft(prev => ({ ...prev, personalProfile: chatProposal.text }))
         setChatMessages(prev => [...prev, { role: 'assistant', text: 'Parfait, j’ai validé la formulation de votre profil.' }])
-        setChatStep(prev => Math.min(prev + 1, chatFlow.length - 1))
+        const nextStep = Math.min(chatStep + 1, chatFlow.length - 1)
+        setChatStep(nextStep)
+        setChatMessages(prev => [...prev, {
+          role: 'assistant',
+          text: `Merci. Passons à l’étape suivante : ${chatFlow[nextStep]}`,
+        }])
       } else {
         const sourceText = chatProposal.rawText || chatProposal.text
         const result = await rewriteChatText('profile', sourceText)
@@ -450,20 +578,44 @@ export default function Create() {
       if (accept) {
         setDraft(prev => {
           const list = [...prev.experiences]
-          const index = chatProposal.index ?? list.length - 1
-          list[index] = {
-            ...list[index],
-            title: chatProposal.title || list[index]?.title || 'Intitulé de poste',
+          const index = Math.min(chatProposal.index ?? list.length, list.length)
+          const base = list[index] || {
+            id: createId('exp'),
+            title: '',
+            company: '',
+            location: '',
+            startDate: '',
+            endDate: '',
+            description: '',
+            technologies: '',
+          }
+          const experience = {
+            ...base,
+            ...chatProposal.experienceData,
             description: chatProposal.text,
           }
+          if (index < list.length) list[index] = experience
+          else list.push(experience)
           return { ...prev, experiences: list }
         })
-        setChatMessages(prev => [...prev, { role: 'assistant', text: 'Très bien, j’ai retenu cette version de votre expérience.' }])
-        setChatStep(prev => Math.min(prev + 1, chatFlow.length - 1))
+        if (chatProposal.finishRequested) {
+          setChatMessages(prev => [...prev, { role: 'assistant', text: 'Expérience enregistrée. Très bien, passons à la formation.' }])
+          setChatStep(4)
+        } else {
+          setChatMessages(prev => [...prev, {
+            role: 'assistant',
+            text: 'Expérience enregistrée. Ajoutez-en une autre, ou écrivez « fin » pour passer à la formation.',
+          }])
+          setChatStep(3)
+        }
       } else {
         const sourceText = chatProposal.rawText || chatProposal.text
         const result = await rewriteChatText('experience', sourceText)
-        setChatProposal({ ...chatProposal, text: result.text, warning: result.warning })
+        setChatProposal({
+          ...chatProposal,
+          text: result.text,
+          warning: [chatProposal.warning, result.warning].filter(Boolean).join(' ') || undefined,
+        })
         setChatMessages(prev => [...prev, { role: 'assistant', text: 'Je peux la reformuler différemment. Donnez-moi un autre angle.' }])
       }
     }
@@ -777,9 +929,17 @@ export default function Create() {
             {creationMode === 'chat' ? (
               <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-semibold text-slate-900">Assistant de création</h2>
-                    <p className="text-sm text-slate-500">Répondez en français, par petits groupes logiques.</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#1E3A5F] text-sm font-bold text-white" aria-hidden="true">
+                      AW
+                    </div>
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">Awa — Assistante CV</h2>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+                        <span className="h-2 w-2 rounded-full bg-green-500" aria-hidden="true" />
+                        en ligne
+                      </p>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -790,59 +950,104 @@ export default function Create() {
                   </button>
                 </div>
 
-                <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  {chatFlow.map((item, index) => (
-                    <div key={item} className={`rounded-xl border p-3 text-sm ${index === chatStep ? 'border-slate-900 bg-white' : 'border-slate-200 bg-slate-100 text-slate-600'}`}>
-                      <span className="font-semibold text-slate-900">Étape {index + 1} :</span> {item}
-                    </div>
-                  ))}
+                <div className="mb-4">
+                  <div className="mb-1.5 flex items-center justify-between text-xs text-slate-500">
+                    <span>Progression</span>
+                    <span>Étape {Math.min(chatStep + 1, chatFlow.length)} sur {chatFlow.length}</span>
+                  </div>
+                  <div
+                    className="h-1.5 overflow-hidden rounded-full bg-slate-100"
+                    role="progressbar"
+                    aria-label="Progression de la conversation"
+                    aria-valuemin={1}
+                    aria-valuemax={chatFlow.length}
+                    aria-valuenow={Math.min(chatStep + 1, chatFlow.length)}
+                  >
+                    <div
+                      className="h-full rounded-full bg-[#E8963A] transition-[width] duration-300"
+                      style={{ width: `${(chatStep / (chatFlow.length - 1)) * 100}%` }}
+                    />
+                  </div>
                 </div>
 
-                <div className="mt-5 max-h-[420px] space-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4">
+                <div ref={chatScrollRef} className="mt-5 max-h-[420px] space-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4">
                   {chatMessages.map((message, index) => (
-                    <div key={`${message.role}-${index}`} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6 ${message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                    <motion.div
+                      key={`${message.role}-${index}`}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.22 }}
+                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div className={`max-w-[85%] rounded-3xl px-4 py-2.5 text-sm leading-6 ${message.role === 'user' ? 'bg-[#1E3A5F] text-white' : 'bg-slate-100 text-slate-800'}`}>
                         {message.text}
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
 
                   {isChatAiWorking ? (
-                    <div className="flex justify-start">
-                      <div className="rounded-2xl bg-slate-100 px-3 py-2 text-sm text-slate-600">Je reformule votre texte…</div>
-                    </div>
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex justify-start"
+                    >
+                      <div className="flex items-center gap-2 rounded-3xl bg-slate-100 px-4 py-3 text-sm text-slate-600" aria-label="Awa est en train d’écrire">
+                        <span>en train d’écrire</span>
+                        <span className="flex items-center gap-1" aria-hidden="true">
+                          {[0, 1, 2].map(dot => (
+                            <motion.span
+                              key={dot}
+                              className="h-1.5 w-1.5 rounded-full bg-[#1E3A5F]"
+                              animate={{ y: [0, -4, 0] }}
+                              transition={{ duration: 0.6, repeat: Infinity, delay: dot * 0.15 }}
+                            />
+                          ))}
+                        </span>
+                      </div>
+                    </motion.div>
                   ) : null}
 
                   {chatProposal ? (
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-slate-700">
-                      <p className="font-semibold text-slate-900">Voici ma proposition :</p>
+                    <div className="rounded-2xl border border-[#1E3A5F]/20 bg-[#1E3A5F]/5 p-4 text-sm text-slate-700">
+                      <p className="font-semibold text-[#1E3A5F]">Voici ma proposition :</p>
                       <p className="mt-2 whitespace-pre-line">{chatProposal.text}</p>
                       {chatProposal.warning ? (
                         <p className="mt-2 text-xs font-medium text-amber-700">{chatProposal.warning}</p>
                       ) : null}
                       <p className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Ça te convient, ou je reformule ?</p>
                       <div className="mt-3 flex flex-wrap gap-3">
-                        <button type="button" onClick={() => void applyChatProposal(true)} className="rounded-full bg-emerald-600 px-3 py-2 text-sm font-semibold text-white">Accepter</button>
-                        <button type="button" onClick={() => void applyChatProposal(false)} className="rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">Reformuler</button>
+                        <button type="button" onClick={() => void applyChatProposal(true)} className="rounded-full bg-[#E8963A] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#d7832d]">Accepter</button>
+                        <button type="button" onClick={() => void applyChatProposal(false)} className="rounded-full border border-[#1E3A5F] bg-white px-4 py-2 text-sm font-semibold text-[#1E3A5F] transition hover:bg-[#1E3A5F]/5">Reformuler</button>
                       </div>
                     </div>
                   ) : null}
                 </div>
 
-                <div className="mt-5 flex gap-3">
+                <div className="mt-4 flex items-end gap-2 rounded-full border border-slate-300 bg-white p-1.5 shadow-sm focus-within:border-[#1E3A5F] focus-within:ring-2 focus-within:ring-[#1E3A5F]/10">
                   <textarea
+                    ref={chatInputRef}
                     value={chatInput}
-                    onChange={e => setChatInput(e.target.value)}
-                    rows={3}
+                    onChange={event => setChatInput(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        void handleChatSubmit()
+                      }
+                    }}
+                    rows={1}
                     placeholder="Répondez à la question, ou donnez plusieurs infos d’un coup…"
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    className="max-h-32 min-h-10 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2 text-sm leading-6 text-slate-800 outline-none ring-0 placeholder:text-slate-400 focus:border-0 focus:outline-none focus:ring-0"
                   />
                   <button
                     type="button"
                     onClick={() => void handleChatSubmit()}
-                    className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                    aria-label="Envoyer le message"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#E8963A] text-white transition hover:bg-[#d7832d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1E3A5F]"
                   >
-                    Envoyer
+                    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
+                      <path d="M4 12 20 4l-5 16-3.5-7.5L4 12Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                      <path d="m11.5 12.5 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
                   </button>
                 </div>
 
